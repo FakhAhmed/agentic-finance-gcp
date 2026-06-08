@@ -1,0 +1,15 @@
+# Environnement Python
+venv/
+__pycache__/
+*.pyc
+.env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+
+# Google Cloud
+*-key.json
+credentials.json
