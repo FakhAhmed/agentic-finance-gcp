@@ -4,6 +4,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_google_vertexai import ChatVertexAI
 from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel, Field
+from agent.rag_tool import setup_rag_retriever
 
 # ==========================================
 # 1. DÉFINITION DE L'ÉTAT DU GRAPHE (STATE)
@@ -37,11 +38,31 @@ def sql_agent_node(state: AgentState):
     return {"messages": [AIMessage(content=response)]}
 
 def rag_agent_node(state: AgentState):
-    """Spécialiste de la recherche dans les rapports textuels."""
+    """Spécialiste de la recherche dans le rapport annuel 2023 avec RAG."""
     last_message = state["messages"][-1].content
-    # Ici, l'agent utiliserait son outil Vector/PDF (Étape 2)
-    response = f"[Agent RAG] J'ai lu les rapports annuels concernant : '{last_message}'. Les difficultés viennent du marché européen."
-    return {"messages": [AIMessage(content=response)]}
+    
+    # 1. Initialiser le Retriever (qui va lire data/rapport_techcorp_2023.txt)
+    retriever = setup_rag_retriever()
+    
+    # 2. Chercher les documents pertinents dans la base FAISS
+    docs_trouves = retriever.invoke(last_message)
+    contexte_extrait = "\n\n".join([doc.page_content for doc in docs_trouves])
+    
+    # 3. Demander au LLM de formuler une belle réponse basée UNIQUEMENT sur le document
+    prompt_rag = f"""
+    Tu es l'Agent d'analyse textuelle de TechCorp. Réponds à la question en utilisant uniquement le contexte suivant extrait de notre rapport annuel. 
+    Si la réponse n'y est pas, dis explicitement que l'information n'est pas dans le rapport fourni.
+    
+    Contexte extrait du rapport :
+    {contexte_extrait}
+    
+    Question de l'utilisateur : {last_message}
+    """
+    
+    # Génération de la réponse
+    reponse = llm.invoke(prompt_rag)
+    
+    return {"messages": [AIMessage(content=reponse.content)]}
 
 # ==========================================
 # 4. CRÉATION DU SUPERVISEUR (ROUTING)
