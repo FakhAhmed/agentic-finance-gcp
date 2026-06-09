@@ -88,31 +88,35 @@ def sql_agent_node(state: AgentState):
         return {"messages": [AIMessage(content=erreur_msg)]}
 
 def rag_agent_node(state: AgentState):
-    """Spécialiste de la recherche dans le rapport annuel 2023 avec RAG."""
+    """Spécialiste de l'analyse documentaire avancée avec citations."""
     last_message = state["messages"][-1].content
     
-    # 1. Initialiser le Retriever (qui va lire data/rapport_techcorp_2023.txt)
-    retriever = setup_rag_retriever()
-    
-    # 2. Chercher les documents pertinents dans la base FAISS
-    docs_trouves = retriever.invoke(last_message)
-    contexte_extrait = "\n\n".join([doc.page_content for doc in docs_trouves])
-    
-    # 3. Demander au LLM de formuler une belle réponse basée UNIQUEMENT sur le document
-    prompt_rag = f"""
-    Tu es l'Agent d'analyse textuelle de TechCorp. Réponds à la question en utilisant uniquement le contexte suivant extrait de notre rapport annuel. 
-    Si la réponse n'y est pas, dis explicitement que l'information n'est pas dans le rapport fourni.
-    
-    Contexte extrait du rapport :
-    {contexte_extrait}
-    
-    Question de l'utilisateur : {last_message}
-    """
-    
-    # Génération de la réponse
-    reponse = llm.invoke(prompt_rag)
-    
-    return {"messages": [AIMessage(content=reponse.content)]}
+    try:
+        retriever = setup_rag_retriever()
+        docs_trouves = retriever.invoke(last_message)
+        
+        # On formate le contexte en incluant EXPLICITEMENT le numéro de la page source
+        contexte_formate = "\n\n".join(
+            [f"[Page {doc.metadata.get('page', 'Inconnue')}] : {doc.page_content}" for doc in docs_trouves]
+        )
+        
+        prompt_rag = f"""
+        Tu es un Auditeur Financier Senior. Réponds à la question de l'utilisateur de manière détaillée et analytique.
+        
+        RÈGLE ABSOLUE : Tu dois t'appuyer UNIQUEMENT sur les extraits ci-dessous.
+        RÈGLE DE CITATION : À chaque fois que tu affirmes un chiffre ou un fait, tu DOIS indiquer la source sous ce format exact : [Source : Page X].
+        
+        Extraits du rapport financier :
+        {contexte_formate}
+        
+        Question : {last_message}
+        """
+        
+        reponse = llm.invoke(prompt_rag)
+        return {"messages": [AIMessage(content=reponse.content)]}
+        
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"[Agent RAG] Erreur de lecture documentaire : {str(e)}")]}
 
 # ==========================================
 # 4. CRÉATION DU SUPERVISEUR (ROUTING)
