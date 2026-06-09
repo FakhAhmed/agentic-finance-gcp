@@ -6,6 +6,7 @@ from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel, Field
 from agent.rag_tool import setup_rag_retriever
 from langchain_community.utilities import SQLDatabase
+from langgraph.checkpoint.memory import MemorySaver
 
 # ==========================================
 # 1. DÉFINITION DE L'ÉTAT DU GRAPHE (STATE)
@@ -118,13 +119,25 @@ def rag_agent_node(state: AgentState):
     except Exception as e:
         return {"messages": [AIMessage(content=f"[Agent RAG] Erreur de lecture documentaire : {str(e)}")]}
 
+def agent_conversationnel_node(state: AgentState):
+    """Gère la discussion générale et utilise la mémoire de LangGraph."""
+    
+    # La magie est ici : on donne TOUT l'historique de la conversation au LLM
+    # pour qu'il puisse lire les anciens messages et se souvenir de toi.
+    messages_historique = state["messages"]
+    
+    # Le LLM lit l'historique et génère une réponse
+    reponse = llm.invoke(messages_historique)
+    
+    return {"messages": [AIMessage(content=reponse.content)]}
+
 # ==========================================
 # 4. CRÉATION DU SUPERVISEUR (ROUTING)
 # ==========================================
 # On force le LLM à répondre avec une structure stricte grâce à Pydantic
 class RouteResponse(BaseModel):
-    next_agent: Literal["SQL_AGENT", "RAG_AGENT", "FINISH"] = Field(
-        description="Choisissez l'agent en fonction de la question. 'SQL_AGENT' pour les chiffres/données, 'RAG_AGENT' pour les textes/causes/rapports, 'FINISH' si la réponse a été donnée ou si c'est une salutation."
+    next_agent: Literal["SQL_AGENT", "RAG_AGENT", "Agent_Conversationnel", "FINISH"] = Field(
+        description="Choisissez l'agent en fonction de la question. 'SQL_AGENT' pour les chiffres/données, 'RAG_AGENT' pour les textes/causes/rapports, 'Agent_Conversationnel' pour les salutations ou se souvenir du prénom/métier, 'FINISH' si la réponse a été donnée."
     )
 
 supervisor_llm = llm.with_structured_output(RouteResponse)
@@ -144,6 +157,9 @@ workflow = StateGraph(AgentState)
 workflow.add_node("Supervisor", supervisor_node)
 workflow.add_node("SQL_AGENT", sql_agent_node)
 workflow.add_node("RAG_AGENT", rag_agent_node)
+workflow.add_node("Agent_Conversationnel", agent_conversationnel_node)
+
+
 
 # Définition des chemins (Edges)
 workflow.add_edge(START, "Supervisor")
@@ -155,6 +171,7 @@ workflow.add_conditional_edges(
     {
         "SQL_AGENT": "SQL_AGENT",
         "RAG_AGENT": "RAG_AGENT",
+        "Agent_Conversationnel": "Agent_Conversationnel",
         "FINISH": END
     }
 )
@@ -162,19 +179,27 @@ workflow.add_conditional_edges(
 # Après qu'un spécialiste ait répondu, on retourne au Superviseur (ou FINISH directement)
 workflow.add_edge("SQL_AGENT", END) 
 workflow.add_edge("RAG_AGENT", END)
+workflow.add_edge("Agent_Conversationnel", END)
 
-# Compilation du graphe
-agentic_app = workflow.compile()
+# --- INITIALISATION DE LA MÉMOIRE ---
+memory = MemorySaver()
+
+# Compilation du graphe AVEC le système de sauvegarde (checkpointer)
+agentic_app = workflow.compile(checkpointer=memory)
 
 # ==========================================
 # 6. FONCTION PRINCIPALE POUR STREAMLIT
 # ==========================================
-def run_agent(question: str):
-    """Exécute le graphe avec la question de l'utilisateur."""
-    inputs = {"messages": [HumanMessage(content=question)]}
+def run_agent(user_message: str):
+    """Point d'entrée pour Streamlit. Lance le graphe avec la question de l'utilisateur."""
     
-    # On récupère l'état final
-    final_state = agentic_app.invoke(inputs)
+    # 1. On configure l'identifiant de la conversation
+    config = {"configurable": {"thread_id": "session_utilisateur_1"}}
     
-    # On retourne le contenu du tout dernier message
-    return final_state["messages"][-1].content
+    # 2. On prépare le message
+    inputs = {"messages": [HumanMessage(content=user_message)]}
+    
+    # 3. On exécute l'application avec la mémoire
+    reponse = agentic_app.invoke(inputs, config=config)
+    
+    return reponse["messages"][-1].content
