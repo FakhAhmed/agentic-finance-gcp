@@ -1,12 +1,21 @@
-import os
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.prebuilt import create_react_agent
-from langchain_core.messages import HumanMessage, SystemMessage
-from agent.tools import agent_tools
+import operator
+from typing import Annotated, Sequence, TypedDict, Literal
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_google_vertexai import ChatVertexAI
+from langgraph.graph import StateGraph, START, END
+from pydantic import BaseModel, Field
 
+# ==========================================
+# 1. DÉFINITION DE L'ÉTAT DU GRAPHE (STATE)
+# ==========================================
+# C'est la "mémoire" partagée entre tous nos agents.
+class AgentState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], operator.add]
+    next_agent: str # Indique qui doit prendre la main
 
-# 1. Configuration du modèle (On utilise la version Flash dispo sur ton interface)
+# ==========================================
+# 2. CONFIGURATION DU MODÈLE (VERTEX AI)
+# ==========================================
 llm = ChatVertexAI(
     model="gemini-3.5-flash",
     project="agentic-finance-poc",
@@ -14,44 +23,83 @@ llm = ChatVertexAI(
     temperature=0
 )
 
-# 2. Création de l'Agent Autonome
-agent_executor = create_react_agent(llm, agent_tools)
+# ==========================================
+# 3. CRÉATION DES AGENTS SPÉCIALISTES (WORKERS)
+# ==========================================
+# Pour l'instant, on simule (mock) leur comportement. 
+# Dans les prochaines étapes, ils auront de vrais outils SQL et RAG.
 
-# 3. Le "Prompt Système" (Les règles du jeu)
-system_prompt = """
-Tu es un Analyste Financier Expert travaillant pour un Big 4.
-Ton but est de répondre aux questions des utilisateurs en utilisant les outils à ta disposition.
+def sql_agent_node(state: AgentState):
+    """Spécialiste des données quantitatives et bases de données."""
+    last_message = state["messages"][-1].content
+    # Ici, l'agent utiliserait ses outils SQL (Étape 3)
+    response = f"[Agent SQL] J'ai analysé les chiffres pour : '{last_message}'. Le CA 2023 est de 165 milliards."
+    return {"messages": [AIMessage(content=response)]}
 
-Règles strictes :
-1. Si on te pose une question sur des chiffres ou des bilans, utilise l'outil `get_financial_metrics` pour générer et exécuter une requête SQL.
-2. Si on te pose une question sur la stratégie, le contexte ou ce que dit la direction, utilise l'outil `read_annual_report`.
-3. Si la question nécessite de croiser des chiffres et du contexte, utilise les deux outils successivement avant de répondre.
-4. Réponds toujours en français de manière professionnelle, claire et concise.
-"""
+def rag_agent_node(state: AgentState):
+    """Spécialiste de la recherche dans les rapports textuels."""
+    last_message = state["messages"][-1].content
+    # Ici, l'agent utiliserait son outil Vector/PDF (Étape 2)
+    response = f"[Agent RAG] J'ai lu les rapports annuels concernant : '{last_message}'. Les difficultés viennent du marché européen."
+    return {"messages": [AIMessage(content=response)]}
 
-# 4. Fonction principale
-def run_agent(user_query: str) -> str:
-    """Envoie la question à l'Agent et récupère la réponse finale."""
-    print(f"\n[Agent] Réflexion en cours pour : '{user_query}'...")
-    
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_query)
-    ]
-    
-    response = agent_executor.invoke({"messages": messages})
-    
-    return response["messages"][-1].content
+# ==========================================
+# 4. CRÉATION DU SUPERVISEUR (ROUTING)
+# ==========================================
+# On force le LLM à répondre avec une structure stricte grâce à Pydantic
+class RouteResponse(BaseModel):
+    next_agent: Literal["SQL_AGENT", "RAG_AGENT", "FINISH"] = Field(
+        description="Choisissez l'agent en fonction de la question. 'SQL_AGENT' pour les chiffres/données, 'RAG_AGENT' pour les textes/causes/rapports, 'FINISH' si la réponse a été donnée ou si c'est une salutation."
+    )
 
-if __name__ == "__main__":
-    print("--- Test de l'Agentic AI Financier ---")
+supervisor_llm = llm.with_structured_output(RouteResponse)
+
+def supervisor_node(state: AgentState):
+    """Analyse la conversation et délègue au bon spécialiste."""
+    # Le superviseur lit la question et décide grâce au structured output
+    decision = supervisor_llm.invoke(state["messages"])
+    return {"next_agent": decision.next_agent}
+
+# ==========================================
+# 5. ASSEMBLAGE DU DAG (Directed Acyclic Graph)
+# ==========================================
+workflow = StateGraph(AgentState)
+
+# Ajout des nœuds
+workflow.add_node("Supervisor", supervisor_node)
+workflow.add_node("SQL_AGENT", sql_agent_node)
+workflow.add_node("RAG_AGENT", rag_agent_node)
+
+# Définition des chemins (Edges)
+workflow.add_edge(START, "Supervisor")
+
+# Logique conditionnelle de routage
+workflow.add_conditional_edges(
+    "Supervisor",
+    lambda state: state["next_agent"], # La fonction lit la décision du superviseur
+    {
+        "SQL_AGENT": "SQL_AGENT",
+        "RAG_AGENT": "RAG_AGENT",
+        "FINISH": END
+    }
+)
+
+# Après qu'un spécialiste ait répondu, on retourne au Superviseur (ou FINISH directement)
+workflow.add_edge("SQL_AGENT", END) 
+workflow.add_edge("RAG_AGENT", END)
+
+# Compilation du graphe
+agentic_app = workflow.compile()
+
+# ==========================================
+# 6. FONCTION PRINCIPALE POUR STREAMLIT
+# ==========================================
+def run_agent(question: str):
+    """Exécute le graphe avec la question de l'utilisateur."""
+    inputs = {"messages": [HumanMessage(content=question)]}
     
-    question_1 = "Quel est le chiffre d'affaires de TechCorp en 2023 et compare le avec 2022 ?"
-    print(f"\nQuestion 1: {question_1}")
-    print(f"Réponse :\n{run_agent(question_1)}")
+    # On récupère l'état final
+    final_state = agentic_app.invoke(inputs)
     
-    print("-" * 50)
-    
-    question_2 = "Selon le rapport annuel, pourquoi TechCorp a eu des difficultés au 3ème trimestre ?"
-    print(f"\nQuestion 2: {question_2}")
-    print(f"Réponse :\n{run_agent(question_2)}")
+    # On retourne le contenu du tout dernier message
+    return final_state["messages"][-1].content
