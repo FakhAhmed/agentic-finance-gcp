@@ -32,52 +32,50 @@ llm = ChatVertexAI(
 # Dans les prochaines étapes, ils auront de vrais outils SQL et RAG.
 
 def sql_agent_node(state: AgentState):
-    """Spécialiste des données quantitatives : implémentation Text-to-SQL sur mesure."""
+    """Spécialiste Big Data : connecté aux Téraoctets de BigQuery."""
     last_message = state["messages"][-1].content
     
-    # 1. Connexion à la base de données SQLite
-    db = SQLDatabase.from_uri("sqlite:///data/finance.db")
+    # 1. Connexion au Dataset Cloud
+    db = SQLDatabase.from_uri("bigquery://agentic-finance-poc/crypto_massive_data")
     
-    # 2. Récupération dynamique du schéma
+    # 2. Récupération du schéma (Les colonnes des blocs et transactions Bitcoin)
     schema = db.get_table_info()
     
     try:
-        # 3. Le Prompt Ingénieur
+        # 3. Le Prompt adapté pour le Big Data
         prompt_sql = f"""
-        Tu es un expert en bases de données SQLite.
-        Voici le schéma exact de notre base de données :
+        Tu es un Lead Data Engineer certifié Google Cloud.
+        Voici le schéma de notre Data Warehouse BigQuery contenant les transactions Bitcoin de 2023 :
         {schema}
         
-        Écris une requête SQL valide pour répondre à cette question de l'utilisateur : "{last_message}"
-        RÈGLE STRICTE : Renvoie UNIQUEMENT le code SQL brut. Pas de balises, pas de texte.
+        Génère une requête en 'Google Standard SQL' pour répondre à cette question : "{last_message}"
+        RÈGLES :
+        - Renvoie UNIQUEMENT le code SQL pur (pas de balises markdown ```sql).
+        - Utilise des LIMIT si la requête risque de renvoyer trop de lignes.
         """
         
-        # Récupération de la réponse brute (qui est une liste chez Vertex AI)
         reponse_brute = llm.invoke(prompt_sql).content
-        
-        # --- CORRECTION : Extraction du texte pur ---
         if isinstance(reponse_brute, list) and len(reponse_brute) > 0:
             texte_sql = reponse_brute[0].get('text', str(reponse_brute))
         else:
             texte_sql = str(reponse_brute)
             
-        # Nettoyage de la requête SQL
         requete_sql = texte_sql.replace("```sql", "").replace("```", "").strip()
+        print(f"\n[DEBUG] Requête BQ générée : \n{requete_sql}\n")
         
-        # 4. Exécution de la requête sur la vraie base
+        # 4. Exécution sur l'infrastructure Google
         resultat_brut = db.run(requete_sql)
         
-        # 5. Formulation de la réponse finale
+        # 5. Interprétation
         prompt_final = f"""
-        Question de l'utilisateur : {last_message}
-        Requête SQL exécutée : {requete_sql}
-        Résultat brut retourné par la base : {resultat_brut}
+        Question : {last_message}
+        SQL exécuté : {requete_sql}
+        Résultat BigQuery : {resultat_brut}
         
-        Formule une réponse naturelle, professionnelle et claire contenant ce résultat exact.
+        Formule une réponse claire et professionnelle pour un analyste financier.
         """
         reponse_finale_brute = llm.invoke(prompt_final).content
         
-        # --- NETTOYAGE de la réponse finale aussi ---
         if isinstance(reponse_finale_brute, list) and len(reponse_finale_brute) > 0:
             texte_final = reponse_finale_brute[0].get('text', str(reponse_finale_brute))
         else:
@@ -86,7 +84,7 @@ def sql_agent_node(state: AgentState):
         return {"messages": [AIMessage(content=texte_final)]}
         
     except Exception as e:
-        erreur_msg = f"[Agent SQL] J'ai rencontré une erreur lors de la manipulation des données : {str(e)}"
+        erreur_msg = f"[Agent SQL BigQuery] Erreur lors de l'analyse : {str(e)}"
         return {"messages": [AIMessage(content=erreur_msg)]}
 
 def rag_agent_node(state: AgentState):
