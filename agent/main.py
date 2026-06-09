@@ -5,6 +5,7 @@ from langchain_google_vertexai import ChatVertexAI
 from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel, Field
 from agent.rag_tool import setup_rag_retriever
+from langchain_community.utilities import SQLDatabase
 
 # ==========================================
 # 1. DÉFINITION DE L'ÉTAT DU GRAPHE (STATE)
@@ -31,11 +32,62 @@ llm = ChatVertexAI(
 # Dans les prochaines étapes, ils auront de vrais outils SQL et RAG.
 
 def sql_agent_node(state: AgentState):
-    """Spécialiste des données quantitatives et bases de données."""
+    """Spécialiste des données quantitatives : implémentation Text-to-SQL sur mesure."""
     last_message = state["messages"][-1].content
-    # Ici, l'agent utiliserait ses outils SQL (Étape 3)
-    response = f"[Agent SQL] J'ai analysé les chiffres pour : '{last_message}'. Le CA 2023 est de 165 milliards."
-    return {"messages": [AIMessage(content=response)]}
+    
+    # 1. Connexion à la base de données SQLite
+    db = SQLDatabase.from_uri("sqlite:///data/finance.db")
+    
+    # 2. Récupération dynamique du schéma
+    schema = db.get_table_info()
+    
+    try:
+        # 3. Le Prompt Ingénieur
+        prompt_sql = f"""
+        Tu es un expert en bases de données SQLite.
+        Voici le schéma exact de notre base de données :
+        {schema}
+        
+        Écris une requête SQL valide pour répondre à cette question de l'utilisateur : "{last_message}"
+        RÈGLE STRICTE : Renvoie UNIQUEMENT le code SQL brut. Pas de balises, pas de texte.
+        """
+        
+        # Récupération de la réponse brute (qui est une liste chez Vertex AI)
+        reponse_brute = llm.invoke(prompt_sql).content
+        
+        # --- CORRECTION : Extraction du texte pur ---
+        if isinstance(reponse_brute, list) and len(reponse_brute) > 0:
+            texte_sql = reponse_brute[0].get('text', str(reponse_brute))
+        else:
+            texte_sql = str(reponse_brute)
+            
+        # Nettoyage de la requête SQL
+        requete_sql = texte_sql.replace("```sql", "").replace("```", "").strip()
+        
+        # 4. Exécution de la requête sur la vraie base
+        resultat_brut = db.run(requete_sql)
+        
+        # 5. Formulation de la réponse finale
+        prompt_final = f"""
+        Question de l'utilisateur : {last_message}
+        Requête SQL exécutée : {requete_sql}
+        Résultat brut retourné par la base : {resultat_brut}
+        
+        Formule une réponse naturelle, professionnelle et claire contenant ce résultat exact.
+        """
+        reponse_finale_brute = llm.invoke(prompt_final).content
+        
+        # --- NETTOYAGE de la réponse finale aussi ---
+        if isinstance(reponse_finale_brute, list) and len(reponse_finale_brute) > 0:
+            texte_final = reponse_finale_brute[0].get('text', str(reponse_finale_brute))
+        else:
+            texte_final = str(reponse_finale_brute)
+        
+        return {"messages": [AIMessage(content=texte_final)]}
+        
+    except Exception as e:
+        erreur_msg = f"[Agent SQL] J'ai rencontré une erreur lors de la manipulation des données : {str(e)}"
+        return {"messages": [AIMessage(content=erreur_msg)]}
 
 def rag_agent_node(state: AgentState):
     """Spécialiste de la recherche dans le rapport annuel 2023 avec RAG."""
