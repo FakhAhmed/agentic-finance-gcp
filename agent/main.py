@@ -50,7 +50,10 @@ def sql_agent_node(state: AgentState):
         {schema}
         
         Génère une requête en 'Google Standard SQL' pour répondre à cette question : "{last_message}"
-        RÈGLES :
+        RÈGLES IMPORTANTES :
+        - UTILISE EXACTEMENT les noms de tables tels qu'ils sont écrits dans le schéma ci-dessus (par exemple utilise "btc_transactions" et non pas juste "transactions").
+        - N'utilise JAMAIS de fuseaux horaires locaux comme 'fr_FR' dans FORMAT_TIMESTAMP. Utilise 'UTC' uniquement.
+        - Pour extraire le mois, utilise EXTRACT(MONTH FROM block_timestamp).
         - Renvoie UNIQUEMENT le code SQL pur (pas de balises markdown ```sql).
         - Utilise des LIMIT si la requête risque de renvoyer trop de lignes.
         """
