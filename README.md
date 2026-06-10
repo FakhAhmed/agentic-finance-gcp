@@ -18,9 +18,13 @@ Une architecture d'agent IA de niveau entreprise, capable d'analyser des téraoc
 - **Infrastructure :** Conteneurisation Docker, déployé sur Google Cloud Run.
 
 ## 📁 Structure du Projet
-- `/agent` : Logique métier des agents (SQL, RAG, Superviseur).
-- `/app` : Interface utilisateur Streamlit.
-- `setup_bq.py` : Scripts de Data Engineering pour BigQuery.
+- **`/agent/`** : "Cerveau" de l'application (LangGraph). Contient la logique de routage (`main.py`) et la configuration des outils d'IA (`rag_tool.py`, `tools.py`).
+- **`/app/`** : Interface utilisateur web asynchrone (`app.py` via Streamlit).
+- **`/data/`** : Stockage local des données sources (rapports PDF, fichiers TXT/CSV) et de la base vectorielle ChromaDB.
+- **`/infra/`** : Infrastructure as Code (Terraform) pour le déploiement automatisé des ressources sur Google Cloud (`main.tf`).
+- **`Dockerfile`** : Recette de conteneurisation de l'application pour Cloud Run.
+- **`requirements.txt`** : Liste exhaustive des dépendances Python.
+- **`setup_bq.py` & `setup_db.py`** : Scripts d'ingénierie des données pour initialiser les bases de données SQL et BigQuery.
 
 ## 💡 Pourquoi ce projet ?
 Ce PoC démontre la capacité à transformer des données brutes (non structurées et massives) en insights financiers actionnables grâce à une architecture d'agents autonomes, tout en respectant les contraintes de performance et de sécurité Cloud.
