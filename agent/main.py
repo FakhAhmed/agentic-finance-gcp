@@ -190,7 +190,7 @@ agentic_app = workflow.compile(checkpointer=memory)
 # ==========================================
 # 6. FONCTION PRINCIPALE POUR STREAMLIT
 # ==========================================
-def run_agent(user_message: str):
+def run_agent_stream(user_message: str):
     """Point d'entrée pour Streamlit. Lance le graphe avec la question de l'utilisateur."""
     
     # 1. On configure l'identifiant de la conversation
@@ -199,7 +199,8 @@ def run_agent(user_message: str):
     # 2. On prépare le message
     inputs = {"messages": [HumanMessage(content=user_message)]}
     
-    # 3. On exécute l'application avec la mémoire
-    reponse = agentic_app.invoke(inputs, config=config)
-    
-    return reponse["messages"][-1].content
+    # Au lieu d'attendre la fin avec .invoke(), on lit le flux en direct avec .stream()
+    for output in agentic_app.stream(inputs, config=config):
+        # output est un dictionnaire qui ressemble à {"Nom_Du_Noeud": {"messages": [...]}}
+        for node_name, state_data in output.items():
+            yield node_name, state_data
