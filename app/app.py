@@ -49,12 +49,16 @@ if prompt := st.chat_input("Posez votre question financière..."):
         for node_name, node_state in run_agent_stream(prompt):
             
             # Affichage dynamique selon l'agent qui travaille
-            if node_name == "Supervisor":
+            if node_name == "Guardrail":
+                status_container.write("🛡️ Le Pare-feu IA analyse la sécurité de votre requête...")
+            elif node_name == "Supervisor":
                 status_container.write("🕵️‍♂️ Le Superviseur réfléchit et cherche le bon expert...")
             elif node_name == "SQL_AGENT":
                 status_container.write("📊 L'Agent SQL interroge les Téraoctets de BigQuery...")
             elif node_name == "RAG_AGENT":
                 status_container.write("📄 L'Agent RAG fouille dans le rapport financier PDF...")
+            elif node_name == "MARKET_AGENT":
+                status_container.write("📈 L'Agent Marchés analyse les cours en temps réel sur Yahoo Finance...")
             elif node_name == "Agent_Conversationnel":
                 status_container.write("💬 L'Agent Conversationnel formule sa réponse...")
             
