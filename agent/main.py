@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from agent.rag_tool import setup_rag_retriever
 from langchain_community.utilities import SQLDatabase
 from langgraph.checkpoint.memory import MemorySaver
+import yfinance as yf
 
 # ==========================================
 # 1. DÉFINITION DE L'ÉTAT DU GRAPHE (STATE)
@@ -142,11 +143,45 @@ def agent_conversationnel_node(state: AgentState):
 # ==========================================
 # On force le LLM à répondre avec une structure stricte grâce à Pydantic
 class RouteResponse(BaseModel):
-    next_agent: Literal["SQL_AGENT", "RAG_AGENT", "Agent_Conversationnel", "FINISH"] = Field(
-        description="Choisissez l'agent en fonction de la question. 'SQL_AGENT' pour les chiffres/données, 'RAG_AGENT' pour les textes/causes/rapports, 'Agent_Conversationnel' pour les salutations ou se souvenir du prénom/métier, 'FINISH' si la réponse a été donnée."
+    next_agent: Literal["SQL_AGENT", "RAG_AGENT", "Agent_Conversationnel", "MARKET_AGENT", "FINISH"] = Field(
+        description="Choisissez l'agent. 'SQL_AGENT' pour la donnée BigQuery (Bitcoin 2023), 'RAG_AGENT' pour le rapport PDF Alphabet, 'MARKET_AGENT' pour connaître le prix/cours d'une action en Bourse aujourd'hui en temps réel, 'Agent_Conversationnel' pour discuter."
     )
 
 supervisor_llm = llm.with_structured_output(RouteResponse)
+
+def market_agent_node(state: AgentState):
+    """Spécialiste des marchés financiers en direct (Yahoo Finance)."""
+    last_message = state["messages"][-1].content
+    
+    # 1. On demande au LLM d'extraire intelligemment le symbole boursier
+    prompt_extract = f"""
+    Tu es un assistant financier. L'utilisateur pose cette question : "{last_message}"
+    Extrais uniquement le symbole boursier officiel (Ticker) dont il parle (ex: AAPL pour Apple, GOOGL pour Google/Alphabet, BTC-USD pour Bitcoin).
+    Renvoie UNIQUEMENT le ticker, sans aucun autre mot ni ponctuation.
+    """
+    ticker_brut = llm.invoke(prompt_extract).content
+    ticker = ticker_brut[0].get('text', str(ticker_brut)) if isinstance(ticker_brut, list) else str(ticker_brut)
+    ticker = ticker.strip().upper()
+    
+    try:
+        # 2. Appel à l'API Yahoo Finance en temps réel
+        action = yf.Ticker(ticker)
+        data = action.history(period="1d")
+        
+        if data.empty:
+            return {"messages": [AIMessage(content=f"Je n'ai pas pu trouver de données en direct pour le symbole boursier '{ticker}'.")]}
+        
+        # 3. Extraction du prix actuel
+        prix_actuel = data['Close'].iloc[-1]
+        devise = action.info.get('currency', 'USD')
+        nom_entreprise = action.info.get('shortName', ticker)
+        
+        # 4. Réponse finale formatée
+        reponse = f"📊 **Données en temps réel (Yahoo Finance)** :\nLe cours actuel de **{nom_entreprise} ({ticker})** est de **{prix_actuel:.2f} {devise}**."
+        return {"messages": [AIMessage(content=reponse)]}
+        
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"Désolé, une erreur est survenue lors de la connexion à Yahoo Finance pour {ticker} : {str(e)}")]}
 
 def supervisor_node(state: AgentState):
     """Analyse la conversation et délègue au bon spécialiste."""
@@ -164,6 +199,7 @@ workflow.add_node("Supervisor", supervisor_node)
 workflow.add_node("SQL_AGENT", sql_agent_node)
 workflow.add_node("RAG_AGENT", rag_agent_node)
 workflow.add_node("Agent_Conversationnel", agent_conversationnel_node)
+workflow.add_node("MARKET_AGENT", market_agent_node)
 
 
 
@@ -173,10 +209,11 @@ workflow.add_edge(START, "Supervisor")
 # Logique conditionnelle de routage
 workflow.add_conditional_edges(
     "Supervisor",
-    lambda state: state["next_agent"], # La fonction lit la décision du superviseur
+    lambda state: state["next_agent"],
     {
         "SQL_AGENT": "SQL_AGENT",
         "RAG_AGENT": "RAG_AGENT",
+        "MARKET_AGENT": "MARKET_AGENT", # <-- NOUVELLE ROUTE
         "Agent_Conversationnel": "Agent_Conversationnel",
         "FINISH": END
     }
@@ -186,6 +223,7 @@ workflow.add_conditional_edges(
 workflow.add_edge("SQL_AGENT", END) 
 workflow.add_edge("RAG_AGENT", END)
 workflow.add_edge("Agent_Conversationnel", END)
+workflow.add_edge("MARKET_AGENT", END)
 
 # --- INITIALISATION DE LA MÉMOIRE ---
 memory = MemorySaver()
