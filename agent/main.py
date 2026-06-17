@@ -29,67 +29,70 @@ llm = ChatVertexAI(
 # ==========================================
 # 3. CRÉATION DES AGENTS SPÉCIALISTES (WORKERS)
 # ==========================================
-# Pour l'instant, on simule (mock) leur comportement. 
-# Dans les prochaines étapes, ils auront de vrais outils SQL et RAG.
 
 def sql_agent_node(state: AgentState):
-    """Spécialiste Big Data : connecté aux Téraoctets de BigQuery."""
+    """Spécialiste Big Data avec AUTO-CORRECTION (Self-Reflection)."""
     last_message = state["messages"][-1].content
     
-    # 1. Connexion au Dataset Cloud
     db = SQLDatabase.from_uri("bigquery://agentic-finance-poc/crypto_massive_data")
-    
-    # 2. Récupération du schéma (Les colonnes des blocs et transactions Bitcoin)
     schema = db.get_table_info()
     
-    try:
-        # 3. Le Prompt adapté pour le Big Data
-        prompt_sql = f"""
-        Tu es un Lead Data Engineer certifié Google Cloud.
-        Voici le schéma de notre Data Warehouse BigQuery contenant les transactions Bitcoin de 2023 :
-        {schema}
-        
-        Génère une requête en 'Google Standard SQL' pour répondre à cette question : "{last_message}"
-        RÈGLES IMPORTANTES :
-        - UTILISE EXACTEMENT les noms de tables tels qu'ils sont écrits dans le schéma ci-dessus (par exemple utilise "btc_transactions" et non pas juste "transactions").
-        - N'utilise JAMAIS de fuseaux horaires locaux comme 'fr_FR' dans FORMAT_TIMESTAMP. Utilise 'UTC' uniquement.
-        - Pour extraire le mois, utilise EXTRACT(MONTH FROM block_timestamp).
-        - Renvoie UNIQUEMENT le code SQL pur (pas de balises markdown ```sql).
-        - Utilise des LIMIT si la requête risque de renvoyer trop de lignes.
-        """
-        
-        reponse_brute = llm.invoke(prompt_sql).content
-        if isinstance(reponse_brute, list) and len(reponse_brute) > 0:
-            texte_sql = reponse_brute[0].get('text', str(reponse_brute))
-        else:
-            texte_sql = str(reponse_brute)
+    # --- DÉBUT DE LA LOGIQUE D'AUTO-CORRECTION ---
+    max_retries = 3
+    historique_erreurs = "" # Mémoire des erreurs pour que le LLM apprenne de ses échecs
+    
+    for tentative in range(max_retries):
+        print(f"\n🔄 [Agent SQL] Tentative {tentative + 1} / {max_retries}...")
+        try:
+            prompt_sql = f"""
+            Tu es un Lead Data Engineer certifié Google Cloud.
+            Voici le schéma de notre Data Warehouse BigQuery :
+            {schema}
             
-        requete_sql = texte_sql.replace("```sql", "").replace("```", "").strip()
-        print(f"\n[DEBUG] Requête BQ générée : \n{requete_sql}\n")
-        
-        # 4. Exécution sur l'infrastructure Google
-        resultat_brut = db.run(requete_sql)
-        
-        # 5. Interprétation
-        prompt_final = f"""
-        Question : {last_message}
-        SQL exécuté : {requete_sql}
-        Résultat BigQuery : {resultat_brut}
-        
-        Formule une réponse claire et professionnelle pour un analyste financier.
-        """
-        reponse_finale_brute = llm.invoke(prompt_final).content
-        
-        if isinstance(reponse_finale_brute, list) and len(reponse_finale_brute) > 0:
-            texte_final = reponse_finale_brute[0].get('text', str(reponse_finale_brute))
-        else:
-            texte_final = str(reponse_finale_brute)
-        
-        return {"messages": [AIMessage(content=texte_final)]}
-        
-    except Exception as e:
-        erreur_msg = f"[Agent SQL BigQuery] Erreur lors de l'analyse : {str(e)}"
-        return {"messages": [AIMessage(content=erreur_msg)]}
+            Génère une requête en 'Google Standard SQL' pour répondre à : "{last_message}"
+            
+            {historique_erreurs}
+            
+            RÈGLES IMPORTANTES :
+            - UTILISE EXACTEMENT les noms de tables du schéma (ex: `bigquery-public-data.crypto_bitcoin.transactions`).
+            - Renvoie UNIQUEMENT le code SQL pur (pas de balises markdown).
+            - Utilise 'UTC' pour les dates.
+            """
+            
+            reponse_brute = llm.invoke(prompt_sql).content
+            texte_sql = reponse_brute[0].get('text', str(reponse_brute)) if isinstance(reponse_brute, list) else str(reponse_brute)
+            requete_sql = texte_sql.replace("```sql", "").replace("```", "").strip()
+            
+            print(f"[DEBUG] Requête BQ testée :\n{requete_sql}")
+            
+            # 4. Exécution (C'est ici que ça peut planter !)
+            resultat_brut = db.run(requete_sql)
+            
+            # SI ON ARRIVE ICI : C'EST UN SUCCÈS ! ON SORT DE LA BOUCLE.
+            print("✅ [Agent SQL] Requête exécutée avec succès !")
+            
+            prompt_final = f"""
+            Question : {last_message}
+            SQL exécuté : {requete_sql}
+            Résultat : {resultat_brut}
+            Formule une réponse claire pour un analyste financier.
+            """
+            
+            reponse_finale_brute = llm.invoke(prompt_final).content
+            texte_final = reponse_finale_brute[0].get('text', str(reponse_finale_brute)) if isinstance(reponse_finale_brute, list) else str(reponse_finale_brute)
+            
+            return {"messages": [AIMessage(content=texte_final)]}
+            
+        except Exception as e:
+            # SI ÇA PLANTE : ON ATTRAPE L'ERREUR ET ON LA DONNE AU LLM
+            erreur_actuelle = str(e)
+            print(f"⚠️ [Agent SQL] Échec de la tentative {tentative + 1} : {erreur_actuelle}")
+            
+            # On met à jour l'historique pour la prochaine boucle
+            historique_erreurs += f"\nATTENTION ! Ta requête précédente ({requete_sql}) a échoué avec l'erreur : {erreur_actuelle}. Analyse cette erreur et corrige ta syntaxe SQL pour la prochaine tentative.\n"
+
+    # SI ON SORT DE LA BOUCLE SANS SUCCÈS (après 3 tentatives)
+    return {"messages": [AIMessage(content="[Agent SQL] J'ai tenté de générer la requête 3 fois, mais la base de données renvoie toujours une erreur. La question est peut-être trop complexe ou les données n'existent pas.")]}
 
 def rag_agent_node(state: AgentState):
     """Spécialiste de l'analyse documentaire avancée avec citations."""
