@@ -2,7 +2,7 @@
 
 Une architecture d'agent IA de niveau entreprise, capable d'analyser des téraoctets de données financières, de lire des rapports complexes et d'interroger les marchés en temps réel, le tout entièrement sécurisé, tracé et déployé sur Google Cloud Platform.
 
-- **Lien :** [Agentic AI Financier Multimodal :](https://agentic-finance-app-722746477682.europe-west9.run.app) 
+- **Lien :** [Agentic AI Financier Multimodal](https://agentic-finance-app-722746477682.europe-west9.run.app) 
 
 ## 🚀 Fonctionnalités Clés
 - **Routage Intelligent (Multi-Agent) :** Un superviseur IA délègue dynamiquement les requêtes entre 4 experts spécialisés : 
