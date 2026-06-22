@@ -130,4 +130,4 @@ zstandard==0.25.0
 sqlalchemy-bigquery
 pypdf
 chromadb
-yfinanceyfinance
+yfinance
