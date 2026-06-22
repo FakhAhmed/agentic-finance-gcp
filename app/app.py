@@ -75,8 +75,8 @@ if prompt := st.chat_input("Posez votre question financière..."):
                     reponse_finale = str(contenu_brut)
         
         # 4. Quand c'est fini, on ferme joliment la boîte de statut
-        status_container.update(label="✅ Réponse générée avec succès !", state="complete", expanded=False)
-        
+        status_container.update(label="✅ Réponse générée avec succès !", state="complete", expanded=True)   
+             
         # 5. On affiche la vraie réponse de l'IA
         st.markdown(reponse_finale)
         st.session_state.messages.append({"role": "assistant", "content": reponse_finale})
